@@ -1,0 +1,7 @@
+# settings.py
+
+DEFAULT_ROWS = 33
+DEFAULT_COLS = 45
+DEFAULT_PIXEL_SIZE = 15
+EMPTY_COLOR = "#FFFFFF"
+PALETTE_FILE = "my_palettes.json"
