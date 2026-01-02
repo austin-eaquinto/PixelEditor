@@ -27,7 +27,7 @@ class PaletteManager:
         self.pal_win.transient(self.app.root) 
         
         self.pal_win.title("Palette Manager")
-        self.pal_win.geometry("600x450+150+150")
+        self.pal_win.geometry("600x500+150+150") # Slightly taller for new buttons
         self.pal_win.resizable(False, False)
         
         # Load/Save Frame
@@ -59,6 +59,15 @@ class PaletteManager:
         self.manager_slots_frame.pack(pady=10, fill=tk.BOTH, expand=True)
         
         self.refresh_manager_slots()
+
+        # --- FIX: ADD SAVE / DONE BUTTONS AT BOTTOM ---
+        ctrl_bottom = tk.Frame(self.pal_win)
+        ctrl_bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
+        tk.Button(ctrl_bottom, text="Done / Close", command=self.hide_window).pack(side=tk.RIGHT)
+        tk.Button(ctrl_bottom, text="💾 Save Current as New Preset", bg="#e1f5fe", 
+                  command=self.save_palette_to_disk).pack(side=tk.RIGHT, padx=10)
+        # -----------------------------------------------
         
         self.pal_win.update_idletasks()
         self.pal_win.deiconify()
@@ -148,7 +157,7 @@ class PaletteManager:
                 messagebox.showerror("Invalid Hex", "Invalid hex code.", parent=self.pal_win)
 
     def save_palette_to_disk(self):
-        name = simpledialog.askstring("Save Palette", "Name:", parent=self.pal_win)
+        name = simpledialog.askstring("Save Palette", "Name for new preset:", parent=self.pal_win)
         
         if name:
             self.app.saved_palettes[name] = list(self.app.current_palette)

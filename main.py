@@ -18,8 +18,8 @@ class PixelEditor:
     def __init__(self, root):
         print("Initializing Interface...")
         self.root = root
-        self.root.title("Gemini Pixel Editor v30 - Fixed")
-        self.root.geometry("800x650+100+100")
+        self.root.title("Gemini Pixel Editor v33 - Smart Navigation")
+        self.root.geometry("850x650+100+100") 
         
         # GLOBAL SETTINGS
         self.rows = DEFAULT_ROWS
@@ -33,25 +33,24 @@ class PixelEditor:
         self.show_grid = True
         self.settings_win = None
         self.current_project_path = None 
+        self.clipboard = None 
 
-        # --- LOAD ICONS (PROGRAMMATICALLY) ---
-        # This uses the new safe method from icons.py
+        # --- LOAD ICONS ---
         try:
             self.img_brush = icons.create_icon("brush")
             self.img_eraser = icons.create_icon("eraser")
             self.img_bucket = icons.create_icon("bucket")
+            self.img_select = icons.create_icon("select")
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
         except Exception as e:
             print(f"Icon Warning: {e}")
-            # Fallback to prevent crash if something goes wrong
             self.img_brush = None
-            self.img_eraser = None
-            self.img_gemini = None
+            self.img_select = None
 
         # MANAGERS
         self.palette_manager = PaletteManager(self)
-        self.project_manager = ProjectManager(self) # <--- Initialize Project Manager
+        self.project_manager = ProjectManager(self)
 
         # Load Palette Config
         self.saved_palettes = self.project_manager.app.load_palettes_from_disk() if hasattr(self, 'load_palettes_from_disk') else self.load_palettes_from_disk_internal()
@@ -68,6 +67,18 @@ class PixelEditor:
         self.root.bind("<Control-z>", lambda e: self.trigger_undo())
         self.root.bind("<Control-y>", lambda e: self.trigger_redo())
         self.root.bind("<Control-s>", lambda e: self.project_manager.save_project())
+        
+        # Selection Shortcuts
+        self.root.bind("<Control-c>", self.copy_selection)
+        self.root.bind("<Control-v>", self.paste_selection)
+        
+        # We bind arrow keys to Root AND Notebook to ensure we catch them everywhere.
+        # The logic inside `nudge_selection` will decide whether to block the event or not.
+        for widget in [self.root, self.notebook]:
+            widget.bind("<Left>", lambda e: self.nudge_selection(0, -1))
+            widget.bind("<Right>", lambda e: self.nudge_selection(0, 1))
+            widget.bind("<Up>", lambda e: self.nudge_selection(-1, 0))
+            widget.bind("<Down>", lambda e: self.nudge_selection(1, 0))
 
         print("Interface Ready.")
 
@@ -92,6 +103,9 @@ class PixelEditor:
         self.btn_eraser.pack(side=tk.LEFT, padx=1)
         self.btn_bucket = tk.Button(top_frame, image=self.img_bucket, command=self.select_bucket)
         self.btn_bucket.pack(side=tk.LEFT, padx=1)
+        self.btn_select = tk.Button(top_frame, image=self.img_select, command=self.select_selection_tool)
+        self.btn_select.pack(side=tk.LEFT, padx=1)
+        
         self.btn_grab = tk.Button(top_frame, text="✋", width=3, command=self.select_grab)
         self.btn_grab.pack(side=tk.LEFT, padx=1)
 
@@ -101,14 +115,12 @@ class PixelEditor:
         tk.Button(top_frame, text=" Play", image=self.img_play, compound=tk.LEFT, 
                   command=self.open_animation_preview).pack(side=tk.LEFT, padx=10)
         
-        # File Operations (Delegated to ProjectManager)
+        # File Operations
         tk.Frame(top_frame, width=20).pack(side=tk.LEFT) 
         tk.Button(top_frame, text="📂 Load", bg="#2196F3", fg="white", 
                   command=self.project_manager.load_project_folder).pack(side=tk.LEFT, padx=2)
         tk.Button(top_frame, text="💾 Save", bg="#4CAF50", fg="white", 
                   command=self.project_manager.save_project).pack(side=tk.LEFT, padx=2)
-        tk.Button(top_frame, text="💾 Save As", bg="#388E3C", fg="white", 
-                  command=self.project_manager.save_project_as).pack(side=tk.LEFT, padx=2)
         tk.Button(top_frame, text=" Export", image=self.img_gemini, compound=tk.LEFT, bg="#9C27B0", fg="white", 
                   command=self.project_manager.export_for_gemini).pack(side=tk.LEFT, padx=2)
 
@@ -154,9 +166,11 @@ class PixelEditor:
             index = self.notebook.index(f"@{event.x},{event.y}")
             if self.notebook.tab(index, "text") != " + ":
                 menu = tk.Menu(self.root, tearoff=0)
+                menu.add_command(label="Duplicate Frame", command=lambda: self.duplicate_tab(index))
                 menu.add_command(label="Close Frame", command=lambda: self.close_tab_by_index(index))
+                menu.add_separator()
                 menu.add_command(label="Copy Code to Clipboard", 
-                                 command=self.project_manager.export_active_tab) # Delegated
+                                 command=self.project_manager.export_active_tab)
                 menu.post(event.x_root, event.y_root)
         except: pass
 
@@ -180,7 +194,17 @@ class PixelEditor:
         else:
             self.notebook.add(new_tab.frame, text=name)
             self.setup_plus_tab() 
-        self.notebook.select(new_tab.frame) 
+        self.notebook.select(new_tab.frame)
+        return new_tab
+
+    def duplicate_tab(self, index):
+        target_widget = self.root.nametowidget(self.notebook.tabs()[index])
+        target_tab = getattr(target_widget, "tab_obj", None)
+        if target_tab:
+            new_tab = self.add_new_tab()
+            new_tab.grid_data = [row[:] for row in target_tab.grid_data]
+            new_tab.draw_grid_lines()
+            self.show_toast(f"Duplicated {self.notebook.tab(index, 'text')}")
 
     def close_tab_by_index(self, index):
         if len(self.notebook.tabs()) <= 2: 
@@ -198,17 +222,36 @@ class PixelEditor:
     # --- UNDO / REDO ---
     def trigger_undo(self):
         tab = self.active_tab()
-        if tab and tab.history:
-            tab.redo_stack.append([row[:] for row in tab.grid_data])
-            tab.grid_data = tab.history.pop()
-            tab.draw_grid_lines()
+        if tab: tab.perform_undo()
 
     def trigger_redo(self):
         tab = self.active_tab()
-        if tab and tab.redo_stack:
-            tab.history.append([row[:] for row in tab.grid_data])
-            tab.grid_data = tab.redo_stack.pop()
-            tab.draw_grid_lines()
+        if tab: tab.perform_redo()
+
+    # --- SELECTION & CLIPBOARD ---
+    def copy_selection(self, event=None):
+        tab = self.active_tab()
+        if tab and tab.copy_to_clipboard():
+            self.show_toast("Selection Copied!")
+
+    def paste_selection(self, event=None):
+        tab = self.active_tab()
+        if tab and self.clipboard:
+            self.select_selection_tool()
+            tab.paste_from_clipboard(self.clipboard)
+            self.show_toast("Pasted!")
+
+    def nudge_selection(self, dr, dc):
+        """Moves selection ONLY if Select tool is active. Otherwise allows default tab switching."""
+        if self.active_tool == "select":
+            tab = self.active_tab()
+            if tab:
+                tab.move_selection_by_offset(dr, dc)
+            # FIX: Only return 'break' when we actually used the keys for movement.
+            # This stops the event from bubbling up to the Notebook (preventing tab switch).
+            return "break"
+        
+        # If not selecting, return None (implicit), allowing Tkinter to process the event normally (Tab Switch).
 
     # --- UI HELPERS ---
     def show_toast(self, message, parent=None, color="#333333"):
@@ -222,27 +265,40 @@ class PixelEditor:
         self.btn_grid.config(text="Grid: ON" if self.show_grid else "Grid: OFF", relief=tk.RAISED if self.show_grid else tk.SUNKEN)
         if self.active_tab(): self.active_tab().draw_grid_lines()
 
-    def select_brush(self):
-        self.active_tool = "brush"; self.active_color = self.brush_color; self.update_tool_visuals()
-    def select_eraser(self):
-        self.active_tool = "eraser"; self.active_color = EMPTY_COLOR; self.update_tool_visuals()
-    def select_grab(self):
-        self.active_tool = "grab"; self.update_tool_visuals()
-    def select_bucket(self):
-        self.active_tool = "bucket"
-        self.active_color = self.brush_color
-        self.update_tool_visuals()
-
-    def update_tool_visuals(self):
+    def _reset_tools(self):
         self.btn_brush.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_eraser.config(relief=tk.RAISED, bg="#f0f0f0")
-        self.btn_bucket.config(relief=tk.RAISED, bg="#f0f0f0") # <--- RESET BUCKET
+        self.btn_bucket.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_grab.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
+        if self.active_tool == "select" and self.active_tab():
+            self.active_tab().commit_selection()
+
+    def select_brush(self):
+        self._reset_tools()
+        self.active_tool = "brush"; self.active_color = self.brush_color
+        self.btn_brush.config(relief=tk.SUNKEN, bg="#ddd")
         
-        if self.active_tool == "brush": self.btn_brush.config(relief=tk.SUNKEN, bg="#ddd")
-        elif self.active_tool == "eraser": self.btn_eraser.config(relief=tk.SUNKEN, bg="#ddd")
-        elif self.active_tool == "bucket": self.btn_bucket.config(relief=tk.SUNKEN, bg="#ddd") # <--- SET BUCKET
-        elif self.active_tool == "grab": self.btn_grab.config(relief=tk.SUNKEN, bg="#ddd")
+    def select_eraser(self):
+        self._reset_tools()
+        self.active_tool = "eraser"; self.active_color = EMPTY_COLOR
+        self.btn_eraser.config(relief=tk.SUNKEN, bg="#ddd")
+
+    def select_grab(self):
+        self._reset_tools()
+        self.active_tool = "grab"
+        self.btn_grab.config(relief=tk.SUNKEN, bg="#ddd")
+        
+    def select_bucket(self):
+        self._reset_tools()
+        self.active_tool = "bucket"; self.active_color = self.brush_color
+        self.btn_bucket.config(relief=tk.SUNKEN, bg="#ddd")
+        
+    def select_selection_tool(self):
+        self._reset_tools()
+        self.active_tool = "select"
+        self.btn_select.config(relief=tk.SUNKEN, bg="#ddd")
+        if self.active_tab(): self.active_tab().draw_grid_lines()
 
     def open_grid_settings(self):
         if self.settings_win and tk.Toplevel.winfo_exists(self.settings_win): self.settings_win.lift(); return
@@ -286,7 +342,6 @@ class PixelEditor:
         return {}
     
     def open_animation_preview(self):
-        # We just launch the class, it handles its own window
         AnimationPreview(self)
 
 if __name__ == "__main__":
