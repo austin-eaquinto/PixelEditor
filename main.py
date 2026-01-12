@@ -18,7 +18,7 @@ class PixelEditor:
     def __init__(self, root):
         print("Initializing Interface...")
         self.root = root
-        self.root.title("Gemini Pixel Editor v36 - Live Sync")
+        self.root.title("Gemini Pixel Editor v37 - Magic Wand")
         
         # --- DYNAMIC WINDOW SIZING ---
         screen_width = self.root.winfo_screenwidth()
@@ -44,7 +44,6 @@ class PixelEditor:
         self.current_project_path = None 
         self.clipboard = None 
         
-        # FIX: Track the preview window instance
         self.preview_window = None 
 
         # --- LOAD ICONS ---
@@ -53,6 +52,7 @@ class PixelEditor:
             self.img_eraser = icons.create_icon("eraser")
             self.img_bucket = icons.create_icon("bucket")
             self.img_select = icons.create_icon("select")
+            self.img_wand   = icons.create_icon("magic_wand") # NEW
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
         except Exception as e:
@@ -80,7 +80,6 @@ class PixelEditor:
         self.root.bind("<Control-y>", lambda e: self.trigger_redo())
         self.root.bind("<Control-s>", lambda e: self.project_manager.save_project())
         
-        # Selection Shortcuts
         self.root.bind("<Control-c>", self.copy_selection)
         self.root.bind("<Control-v>", self.paste_selection)
         
@@ -113,6 +112,10 @@ class PixelEditor:
         self.btn_eraser.pack(side=tk.LEFT, padx=1)
         self.btn_bucket = tk.Button(top_frame, image=self.img_bucket, command=self.select_bucket)
         self.btn_bucket.pack(side=tk.LEFT, padx=1)
+        
+        self.btn_wand = tk.Button(top_frame, image=self.img_wand, command=self.select_magic_wand) # NEW
+        self.btn_wand.pack(side=tk.LEFT, padx=1)
+
         self.btn_select = tk.Button(top_frame, image=self.img_select, command=self.select_selection_tool)
         self.btn_select.pack(side=tk.LEFT, padx=1)
         
@@ -247,6 +250,7 @@ class PixelEditor:
     def paste_selection(self, event=None):
         tab = self.active_tab()
         if tab and self.clipboard:
+            # Auto-switch to select tool on paste
             self.select_selection_tool()
             tab.paste_from_clipboard(self.clipboard)
             self.show_toast("Pasted!")
@@ -283,7 +287,17 @@ class PixelEditor:
         self.btn_bucket.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_grab.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
-        if self.active_tool == "select" and self.active_tab():
+        self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0") # Reset Wand
+        
+        # Only commit selection if we are leaving a selection tool
+        # BUT: If we are switching from Wand -> Select, we might want to keep the selection?
+        # For now, simplest is: changing tools always commits.
+        if (self.active_tool == "select" or self.active_tool == "magic_wand") and self.active_tab():
+            # NOTE: If you switch from Wand -> Select, this commits the wand selection
+            # down to the canvas. To move a wand selection, the user should probably
+            # stick to the Wand tool or we need more complex logic.
+            # actually, let's allow "Select" to NOT commit if coming from Wand?
+            # No, standard behavior: switching tools commits.
             self.active_tab().commit_selection()
 
     def select_brush(self):
@@ -305,6 +319,11 @@ class PixelEditor:
         self._reset_tools()
         self.active_tool = "bucket"; self.active_color = self.brush_color
         self.btn_bucket.config(relief=tk.SUNKEN, bg="#ddd")
+        
+    def select_magic_wand(self):
+        self._reset_tools()
+        self.active_tool = "magic_wand"
+        self.btn_wand.config(relief=tk.SUNKEN, bg="#ddd")
         
     def select_selection_tool(self):
         self._reset_tools()

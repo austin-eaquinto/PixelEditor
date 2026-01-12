@@ -9,7 +9,10 @@ class AnimationPreview:
         self.current_frame_index = 0
         self.timer_id = None
         
-        # Grid Cache
+        # --- CACHING SYSTEM (The Fix) ---
+        self.cached_frames = [] 
+        
+        # Grid Cache (UI Objects)
         self.pixel_cache = []       
         self.onion_cache = []      
         self.cache_created = False
@@ -19,6 +22,7 @@ class AnimationPreview:
         self.win.title("Preview")
         self.win.transient(self.app.root)
         
+        # Determine scale based on pixel size
         if self.app.pixel_size >= 10:
             self.preview_scale = 6
         else:
@@ -27,6 +31,7 @@ class AnimationPreview:
         self.content_w = self.app.cols * self.preview_scale
         self.content_h = self.app.rows * self.preview_scale
         
+        # Window Sizing
         req_w = self.content_w + 40
         req_h = self.content_h + 120
         screen_w = self.win.winfo_screenwidth()
@@ -85,17 +90,22 @@ class AnimationPreview:
         self.scale_speed.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         self.win.protocol("WM_DELETE_WINDOW", self.close_window)
+        
+        # Initial Setup
         self.create_grid_objects()
+        self.rebuild_frame_cache() # Build cache immediately
         self.animate()
 
     def update_speed_label(self, val):
         self.lbl_speed_val.config(text=f"{val}ms")
 
     def create_grid_objects(self):
+        """Creates the Tkinter rectangle objects once. We just change their color later."""
         self.canvas.delete("all")
         self.pixel_cache = [] 
         self.onion_cache = [] 
         
+        # 1. Create Onion Skin Layer (Bottom)
         for r in range(self.app.rows):
             row_items = []
             for c in range(self.app.cols):
@@ -107,6 +117,7 @@ class AnimationPreview:
                 row_items.append(item_id)
             self.onion_cache.append(row_items)
 
+        # 2. Create Active Pixel Layer (Top)
         for r in range(self.app.rows):
             for c in range(self.app.cols):
                 x1 = c * self.preview_scale
@@ -118,17 +129,19 @@ class AnimationPreview:
             
         self.cache_created = True
 
-    def get_live_frames(self):
-        """Fetches the FLATTENED state of all tabs (Grid + Selection)."""
+    def rebuild_frame_cache(self):
+        """
+        HEAVY OPERATION: Fetches data from all tabs.
+        Only call this when the user actually modifies the drawing.
+        """
         frames = []
         tabs = self.app.notebook.tabs()
         for i in range(len(tabs) - 1): 
             tab_widget = self.app.root.nametowidget(tabs[i])
             tab = getattr(tab_widget, "tab_obj", None)
             if tab:
-                # FIX: Use get_flattened_data to see selection in preview
                 frames.append(tab.get_flattened_data())
-        return frames
+        self.cached_frames = frames
 
     def toggle_bg_color(self):
         bg = "#FFFFFF" if self.var_white_bg.get() else "#cccccc"
@@ -141,44 +154,48 @@ class AnimationPreview:
             self.animate()
             
     def refresh_display(self):
+        # Force a redraw of the current frame immediately
         self.draw_scene(self.current_frame_index)
 
     def update_from_editor(self):
-        self.draw_scene(self.current_frame_index)
+        """Called by main app when user draws something."""
+        self.rebuild_frame_cache() # Update our internal data
+        self.draw_scene(self.current_frame_index) # Show it immediately
 
     def animate(self):
         if not self.win.winfo_exists(): return
         
-        live_frames = self.get_live_frames()
-        if not live_frames: return
+        # LIGHT OPERATION: Just use self.cached_frames
+        if not self.cached_frames: 
+            # If cache is empty for some reason, try to build it
+            self.rebuild_frame_cache()
+            if not self.cached_frames: return
 
         if self.is_playing:
-            if self.current_frame_index >= len(live_frames):
+            if self.current_frame_index >= len(self.cached_frames):
                 self.current_frame_index = 0
 
             try:
-                self.draw_scene(self.current_frame_index, live_frames)
+                self.draw_scene(self.current_frame_index)
             except Exception as e:
                 print(f"Render Error: {e}")
 
-            self.win.title(f"Preview - Frame {self.current_frame_index + 1} / {len(live_frames)}")
+            self.win.title(f"Preview - Frame {self.current_frame_index + 1} / {len(self.cached_frames)}")
             
-            self.current_frame_index = (self.current_frame_index + 1) % len(live_frames)
+            self.current_frame_index = (self.current_frame_index + 1) % len(self.cached_frames)
             
             speed = self.scale_speed.get()
             self.timer_id = self.win.after(speed, self.animate)
 
-    def draw_scene(self, frame_idx, frames_source=None):
-        if not self.cache_created: return
+    def draw_scene(self, frame_idx):
+        if not self.cache_created or not self.cached_frames: return
         
-        frames = frames_source if frames_source else self.get_live_frames()
-        if not frames: return
-        
-        if frame_idx >= len(frames): frame_idx = 0
+        if frame_idx >= len(self.cached_frames): frame_idx = 0
         
         mode = self.var_onion_mode.get()
-        current_grid = frames[frame_idx]
+        current_grid = self.cached_frames[frame_idx]
 
+        # Use cached dimensions to avoid index errors if grid size changed
         max_rows = min(self.app.rows, len(current_grid))
         max_cols = min(self.app.cols, len(current_grid[0])) if max_rows > 0 else 0
 
@@ -188,13 +205,16 @@ class AnimationPreview:
                 # --- 1. HANDLE ONION SKIN ---
                 onion_color = None
                 
-                if mode == "prev" and len(frames) > 1:
-                    prev_idx = (frame_idx - 1) % len(frames)
-                    if r < len(frames[prev_idx]) and c < len(frames[prev_idx][0]):
-                         onion_color = frames[prev_idx][r][c]
+                # Optimize Onion Logic: Only look at cached frames
+                if mode == "prev" and len(self.cached_frames) > 1:
+                    prev_idx = (frame_idx - 1) % len(self.cached_frames)
+                    if r < len(self.cached_frames[prev_idx]) and c < len(self.cached_frames[prev_idx][0]):
+                         onion_color = self.cached_frames[prev_idx][r][c]
                 
                 elif mode == "all":
-                    for i, frm in enumerate(frames):
+                    # Simple optimization: Iterate backwards so top layers might be found first? 
+                    # Actually, for "all", we just want ANY color that isn't empty.
+                    for i, frm in enumerate(self.cached_frames):
                         if i == frame_idx: continue
                         if r < len(frm) and c < len(frm[0]):
                             if frm[r][c] != EMPTY_COLOR:

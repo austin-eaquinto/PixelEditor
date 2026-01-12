@@ -236,17 +236,13 @@ class EditorTab:
             self.draw_grid_lines()
             self.app.notify_preview()
 
-    # --- NEW HELPER FOR PREVIEW ---
     def get_flattened_data(self):
         """Returns the grid with any active selection overlayed."""
-        # 1. If no floating pixels, return raw grid
         if not self.floating_pixels:
             return self.grid_data
         
-        # 2. Deep copy to avoid messing up real data
         temp = [row[:] for row in self.grid_data]
         
-        # 3. Stamp floating pixels onto the temp copy
         if self.floating_offset:
             fr, fc = self.floating_offset
             for (lr, lc), color in self.floating_pixels.items():
@@ -274,8 +270,19 @@ class EditorTab:
                     self.sel_start = (r, c)
                     self.sel_end = (r, c)
                     self.draw_grid_lines()
+        
+        elif self.app.active_tool == "magic_wand":
+            self.commit_selection() # Commit previous before starting new
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                self.save_state()
+                self.magic_wand_select(r, c)
+                # We don't notify preview here because selection isn't pixels yet
+                # But visual box needs to update
+                self.draw_grid_lines()
+
         elif self.app.active_tool == "grab": 
             self.canvas.scan_mark(event.x, event.y)
+        
         elif self.app.active_tool == "bucket":
             self.commit_selection()
             if 0 <= r < self.rows and 0 <= c < self.cols:
@@ -287,6 +294,50 @@ class EditorTab:
             self.save_state()
             self.paint(event)
             self.app.notify_preview()
+
+    def magic_wand_select(self, start_r, start_c):
+        """BFS to find connected pixels and lift them to floating layer."""
+        target_color = self.grid_data[start_r][start_c]
+        
+        # Standard BFS
+        queue = [(start_r, start_c)]
+        visited = set()
+        selected_pixels = [] 
+        
+        while queue:
+            r, c = queue.pop(0)
+            if (r, c) in visited: continue
+            visited.add((r, c))
+            
+            if self.grid_data[r][c] == target_color:
+                selected_pixels.append((r, c))
+                # Add neighbors
+                if r > 0: queue.append((r-1, c))
+                if r < self.rows - 1: queue.append((r+1, c))
+                if c > 0: queue.append((r, c-1))
+                if c < self.cols - 1: queue.append((r, c+1))
+                
+        if not selected_pixels: return
+
+        # 1. Calculate Bounds
+        min_r = min(p[0] for p in selected_pixels)
+        max_r = max(p[0] for p in selected_pixels)
+        min_c = min(p[1] for p in selected_pixels)
+        max_c = max(p[1] for p in selected_pixels)
+        
+        # 2. Lift to Floating
+        self.floating_pixels = {}
+        self.floating_offset = (min_r, min_c)
+        
+        for r, c in selected_pixels:
+            rel_r = r - min_r
+            rel_c = c - min_c
+            self.floating_pixels[(rel_r, rel_c)] = self.grid_data[r][c]
+            self.grid_data[r][c] = EMPTY_COLOR 
+            
+        # 3. Set Visual Selection Box
+        self.sel_start = (min_r, min_c)
+        self.sel_end = (max_r, max_c)
 
     def on_drag(self, event):
         canvas_x = self.canvas.canvasx(event.x)
@@ -309,6 +360,11 @@ class EditorTab:
                 self.draw_grid_lines()
         elif self.app.active_tool == "grab": 
             self.canvas.scan_dragto(event.x, event.y, gain=1)
+        
+        # Magic wand has no drag action
+        elif self.app.active_tool == "magic_wand":
+            pass
+            
         else: 
             self.paint(event)
             self.app.notify_preview()

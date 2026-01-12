@@ -26,13 +26,21 @@ def create_icon(type_name):
         for x in range(4, 12): p(x, 5, color)
         p(10, 4, color); p(11, 3, color)
 
-    elif type_name == "select":
-        # New Dotted Box Icon
+    elif type_name == "magic_wand":
+        # New Wand Icon
         color = "#000000"
-        # Top/Bottom dots
+        # The Stick
+        for i in range(6, 14): p(i, i, color)
+        # The Sparkle
+        star_c = "#FF5722" # Orange sparkle
+        p(4, 4, star_c) 
+        p(4, 2, star_c); p(2, 4, star_c) 
+        p(6, 4, star_c); p(4, 6, star_c)
+
+    elif type_name == "select":
+        color = "#000000"
         for x in range(2, 14, 2): 
             p(x, 2, color); p(x, 13, color)
-        # Side dots
         for y in range(2, 14, 2): 
             p(2, y, color); p(13, y, color)
 
