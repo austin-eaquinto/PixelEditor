@@ -15,3 +15,6 @@ env/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# ZIP files are used for a different purpose at the moment
+.zip
