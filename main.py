@@ -18,8 +18,17 @@ class PixelEditor:
     def __init__(self, root):
         print("Initializing Interface...")
         self.root = root
-        self.root.title("Gemini Pixel Editor v33 - Smart Navigation")
-        self.root.geometry("850x650+100+100") 
+        self.root.title("Gemini Pixel Editor v36 - Live Sync")
+        
+        # --- DYNAMIC WINDOW SIZING ---
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        win_width = int(screen_width * 0.85)
+        win_height = int(screen_height * 0.85)
+        x_pos = int((screen_width - win_width) / 2)
+        y_pos = int((screen_height - win_height) / 2)
+        self.root.geometry(f"{win_width}x{win_height}+{x_pos}+{y_pos}")
         
         # GLOBAL SETTINGS
         self.rows = DEFAULT_ROWS
@@ -34,6 +43,9 @@ class PixelEditor:
         self.settings_win = None
         self.current_project_path = None 
         self.clipboard = None 
+        
+        # FIX: Track the preview window instance
+        self.preview_window = None 
 
         # --- LOAD ICONS ---
         try:
@@ -72,8 +84,6 @@ class PixelEditor:
         self.root.bind("<Control-c>", self.copy_selection)
         self.root.bind("<Control-v>", self.paste_selection)
         
-        # We bind arrow keys to Root AND Notebook to ensure we catch them everywhere.
-        # The logic inside `nudge_selection` will decide whether to block the event or not.
         for widget in [self.root, self.notebook]:
             widget.bind("<Left>", lambda e: self.nudge_selection(0, -1))
             widget.bind("<Right>", lambda e: self.nudge_selection(0, 1))
@@ -242,16 +252,18 @@ class PixelEditor:
             self.show_toast("Pasted!")
 
     def nudge_selection(self, dr, dc):
-        """Moves selection ONLY if Select tool is active. Otherwise allows default tab switching."""
         if self.active_tool == "select":
             tab = self.active_tab()
             if tab:
                 tab.move_selection_by_offset(dr, dc)
-            # FIX: Only return 'break' when we actually used the keys for movement.
-            # This stops the event from bubbling up to the Notebook (preventing tab switch).
             return "break"
-        
-        # If not selecting, return None (implicit), allowing Tkinter to process the event normally (Tab Switch).
+        # Implicitly returns None
+
+    # --- LIVE SYNC HELPER ---
+    def notify_preview(self):
+        """Called by EditorTab whenever pixels change."""
+        if self.preview_window:
+            self.preview_window.update_from_editor()
 
     # --- UI HELPERS ---
     def show_toast(self, message, parent=None, color="#333333"):
@@ -317,6 +329,7 @@ class PixelEditor:
             if self.notebook.tab(tab_id, "text") == " + ": continue
             tab = getattr(self.root.nametowidget(tab_id), "tab_obj", None)
             if tab:
+                tab.save_state()
                 tab.cols = new_c; tab.rows = new_r; tab.pixel_size = new_px
                 new_grid = [[EMPTY_COLOR for _ in range(new_c)] for _ in range(new_r)]
                 for r in range(min(len(tab.grid_data), new_r)):
@@ -342,7 +355,11 @@ class PixelEditor:
         return {}
     
     def open_animation_preview(self):
-        AnimationPreview(self)
+        # FIX: Check if already open
+        if self.preview_window and self.preview_window.win.winfo_exists():
+            self.preview_window.win.lift()
+            return
+        self.preview_window = AnimationPreview(self)
 
 if __name__ == "__main__":
     print("Launching Window...")

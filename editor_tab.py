@@ -17,14 +17,12 @@ class EditorTab:
         self.rects = {} 
 
         # --- SELECTION STATE ---
-        self.sel_start = None  # (r, c) where drag started
-        self.sel_end = None    # (r, c) where drag ended
-        self.sel_rect_id = None # Canvas ID for dashed box
+        self.sel_start = None 
+        self.sel_end = None    
+        self.sel_rect_id = None
         
-        # Floating Layer (For moving pixels)
-        # Dictionary {(local_r, local_c): color}
+        # Floating Layer
         self.floating_pixels = None 
-        # (offset_r, offset_c) relative to top-left of grid
         self.floating_offset = None 
 
         # UI Elements
@@ -64,33 +62,27 @@ class EditorTab:
         height = self.rows * self.pixel_size
         self.canvas.config(scrollregion=(0, 0, width, height))
         
-        # 1. Draw Base Pixels (Background Layer)
+        # 1. Draw Base Pixels
         for r in range(self.rows):
             for c in range(self.cols):
+                if r >= len(self.grid_data) or c >= len(self.grid_data[0]): continue
                 color = self.grid_data[r][c]
                 x1, y1 = c * self.pixel_size, r * self.pixel_size
                 rect = self.canvas.create_rectangle(x1, y1, x1+self.pixel_size, y1+self.pixel_size, 
                                                     outline="", fill=color)
                 self.rects[(r, c)] = rect
 
-        # 2. Draw Floating Pixels (If any)
+        # 2. Draw Floating Pixels
         if self.floating_pixels and self.floating_offset:
             fr, fc = self.floating_offset
             for (lr, lc), color in self.floating_pixels.items():
-                # FIX: TRANSPARENCY VISUALS
-                # If the pixel is the background color, don't draw it.
-                # This allows the underlying grid pixels to show through.
                 if color == EMPTY_COLOR: continue
-
-                # absolute row/col
                 ar, ac = fr + lr, fc + lc
-                
-                # Check bounds for drawing
                 x1, y1 = ac * self.pixel_size, ar * self.pixel_size
                 self.canvas.create_rectangle(x1, y1, x1+self.pixel_size, y1+self.pixel_size,
                                              outline="", fill=color, tags="floating")
 
-        # 3. Draw Grid Lines (Foreground Layer)
+        # 3. Draw Grid Lines
         if self.app.show_grid:
             grid_color = "#bbbbbb"
             for c in range(self.cols + 1):
@@ -103,8 +95,6 @@ class EditorTab:
         # 4. Draw Selection Box
         if self.sel_start and self.sel_end:
             r1, c1, r2, c2 = self.get_selection_bounds()
-            
-            # If moving, the selection box follows the floating offset
             if self.floating_pixels:
                 h = r2 - r1 + 1
                 w = c2 - c1 + 1
@@ -134,68 +124,55 @@ class EditorTab:
              if not bounds: return False
              orig_r1, orig_c1, orig_r2, orig_c2 = bounds
              h, w = orig_r2 - orig_r1, orig_c2 - orig_c1
-             
              fr, fc = self.floating_offset
              return (fr <= r <= fr + h) and (fc <= c <= fc + w)
-
         bounds = self.get_selection_bounds()
         if not bounds: return False
         r1, c1, r2, c2 = bounds
         return (r1 <= r <= r2) and (c1 <= c <= c2)
 
     def commit_selection(self):
-        """Stamps the floating pixels onto the grid and clears selection."""
         if self.floating_pixels and self.floating_offset:
             self.save_state()
             fr, fc = self.floating_offset
             for (lr, lc), color in self.floating_pixels.items():
                 ar, ac = fr + lr, fc + lc
                 if 0 <= ar < self.rows and 0 <= ac < self.cols:
-                    # FIX: TRANSPARENCY LOGIC
-                    # Only overwrite the grid if the floating pixel is NOT empty.
                     if color != EMPTY_COLOR:
                         self.grid_data[ar][ac] = color
-            
             self.floating_pixels = None
             self.floating_offset = None
+            self.app.notify_preview()
             
         self.sel_start = None
         self.sel_end = None
         self.draw_grid_lines()
 
     def lift_selection_to_float(self):
-        """Cuts the underlying pixels into the floating layer."""
         if self.floating_pixels: return 
-        
         bounds = self.get_selection_bounds()
         if not bounds: return
-
         self.save_state()
         r1, c1, r2, c2 = bounds
         self.floating_pixels = {}
         self.floating_offset = (r1, c1)
-
         for r in range(r1, r2 + 1):
             for c in range(c1, c2 + 1):
                 self.floating_pixels[(r - r1, c - c1)] = self.grid_data[r][c]
                 self.grid_data[r][c] = EMPTY_COLOR
-        
         self.draw_grid_lines()
 
     def copy_to_clipboard(self):
         if self.floating_pixels:
             self.app.clipboard = self.floating_pixels.copy()
             return True
-        
         bounds = self.get_selection_bounds()
         if not bounds: return False
-        
         r1, c1, r2, c2 = bounds
         data = {}
         for r in range(r1, r2 + 1):
             for c in range(c1, c2 + 1):
                  data[(r - r1, c - c1)] = self.grid_data[r][c]
-        
         self.app.clipboard = data
         return True
 
@@ -203,26 +180,29 @@ class EditorTab:
         if not clipboard_data: return
         self.commit_selection()
         
+        # FIX: Safer Empty Check
+        if not clipboard_data: return
+        
         max_r = max(k[0] for k in clipboard_data.keys())
         max_c = max(k[1] for k in clipboard_data.keys())
-        
         self.sel_start = (0, 0)
         self.sel_end = (max_r, max_c)
         self.floating_pixels = clipboard_data.copy()
         self.floating_offset = (0, 0)
-        
         self.draw_grid_lines()
+        self.app.notify_preview()
 
     def move_selection_by_offset(self, dr, dc):
         if not self.sel_start: return
-        if not self.floating_pixels:
-            self.lift_selection_to_float()
-
+        if not self.floating_pixels: self.lift_selection_to_float()
         curr_r, curr_c = self.floating_offset
         self.floating_offset = (curr_r + dr, curr_c + dc)
         self.draw_grid_lines()
+        self.app.notify_preview()
 
     def save_state(self):
+        if not self.grid_data or not self.grid_data[0]: return 
+        
         state = [row[:] for row in self.grid_data]
         self.history.append(state)
         if len(self.history) > 50: self.history.pop(0)
@@ -230,18 +210,51 @@ class EditorTab:
         
     def perform_undo(self):
         if self.history:
+            potential_state = self.history[-1]
+            if not potential_state or not potential_state[0]:
+                self.history.pop()
+                return
+
             self.redo_stack.append([row[:] for row in self.grid_data])
             self.grid_data = self.history.pop()
+            
+            self.rows = len(self.grid_data)
+            self.cols = len(self.grid_data[0]) if self.rows > 0 else 0
+            
             self.sel_start = None
             self.sel_end = None
             self.floating_pixels = None
             self.draw_grid_lines()
+            self.app.notify_preview()
 
     def perform_redo(self):
         if self.redo_stack:
             self.history.append([row[:] for row in self.grid_data])
             self.grid_data = self.redo_stack.pop()
+            self.rows = len(self.grid_data)
+            self.cols = len(self.grid_data[0]) if self.rows > 0 else 0
             self.draw_grid_lines()
+            self.app.notify_preview()
+
+    # --- NEW HELPER FOR PREVIEW ---
+    def get_flattened_data(self):
+        """Returns the grid with any active selection overlayed."""
+        # 1. If no floating pixels, return raw grid
+        if not self.floating_pixels:
+            return self.grid_data
+        
+        # 2. Deep copy to avoid messing up real data
+        temp = [row[:] for row in self.grid_data]
+        
+        # 3. Stamp floating pixels onto the temp copy
+        if self.floating_offset:
+            fr, fc = self.floating_offset
+            for (lr, lc), color in self.floating_pixels.items():
+                r, c = fr + lr, fc + lc
+                if 0 <= r < self.rows and 0 <= c < self.cols:
+                    if color != EMPTY_COLOR:
+                        temp[r][c] = color
+        return temp
 
     def on_click(self, event):
         canvas_x = self.canvas.canvasx(event.x)
@@ -261,19 +274,19 @@ class EditorTab:
                     self.sel_start = (r, c)
                     self.sel_end = (r, c)
                     self.draw_grid_lines()
-        
         elif self.app.active_tool == "grab": 
             self.canvas.scan_mark(event.x, event.y)
-        
         elif self.app.active_tool == "bucket":
             self.commit_selection()
             if 0 <= r < self.rows and 0 <= c < self.cols:
                 self.save_state()
                 self.flood_fill(r, c, self.app.active_color)
+                self.app.notify_preview()
         else:
             self.commit_selection()
             self.save_state()
             self.paint(event)
+            self.app.notify_preview()
 
     def on_drag(self, event):
         canvas_x = self.canvas.canvasx(event.x)
@@ -288,6 +301,7 @@ class EditorTab:
                 orig_fr, orig_fc = self.drag_orig_offset
                 self.floating_offset = (orig_fr + dr, orig_fc + dc)
                 self.draw_grid_lines()
+                self.app.notify_preview()
             elif self.sel_start:
                 r = max(0, min(self.rows-1, r))
                 c = max(0, min(self.cols-1, c))
@@ -297,6 +311,7 @@ class EditorTab:
             self.canvas.scan_dragto(event.x, event.y, gain=1)
         else: 
             self.paint(event)
+            self.app.notify_preview()
 
     def on_release(self, event):
         if hasattr(self, 'drag_start_ref'):
@@ -336,9 +351,11 @@ class EditorTab:
         self.commit_selection()
         self.save_state()
         self.paint(event, EMPTY_COLOR)
+        self.app.notify_preview()
     
     def drag_eraser(self, event):
         self.paint(event, EMPTY_COLOR)
+        self.app.notify_preview()
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
