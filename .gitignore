@@ -17,4 +17,4 @@ env/
 Thumbs.db
 
 # ZIP files are used for a different purpose at the moment
-.zip
+*.zip
