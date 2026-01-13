@@ -1,6 +1,7 @@
 # editor_tab.py
 import tkinter as tk
 from settings import *
+from history import HistoryManager
 
 class EditorTab:
     """Represents a single Tab/Frame in the animation."""
@@ -12,8 +13,9 @@ class EditorTab:
         
         # Data Structures
         self.grid_data = [[EMPTY_COLOR for _ in range(self.cols)] for _ in range(self.rows)]
-        self.history = []
-        self.redo_stack = []
+        
+        self.history_manager = HistoryManager() 
+
         self.rects = {} 
 
         # --- SELECTION STATE ---
@@ -45,8 +47,10 @@ class EditorTab:
         self.canvas.bind("<Button-1>", self.on_click)      
         self.canvas.bind("<B1-Motion>", self.on_drag) 
         self.canvas.bind("<ButtonRelease-1>", self.on_release)    
-        self.canvas.bind("<Button-3>", self.start_eraser)
-        self.canvas.bind("<B3-Motion>", self.drag_eraser)
+        # Note: Right-click eraser is a specific override, handled separately or we can move it too.
+        # For simplicity, we keep the right-click binding here as a special case for now.
+        self.canvas.bind("<Button-3>", self.start_eraser_override)
+        self.canvas.bind("<B3-Motion>", self.drag_eraser_override)
         
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
@@ -179,10 +183,7 @@ class EditorTab:
     def paste_from_clipboard(self, clipboard_data):
         if not clipboard_data: return
         self.commit_selection()
-        
-        # FIX: Safer Empty Check
         if not clipboard_data: return
-        
         max_r = max(k[0] for k in clipboard_data.keys())
         max_c = max(k[1] for k in clipboard_data.keys())
         self.sel_start = (0, 0)
@@ -200,27 +201,16 @@ class EditorTab:
         self.draw_grid_lines()
         self.app.notify_preview()
 
+    # --- HISTORY METHODS ---
     def save_state(self):
-        if not self.grid_data or not self.grid_data[0]: return 
-        
-        state = [row[:] for row in self.grid_data]
-        self.history.append(state)
-        if len(self.history) > 50: self.history.pop(0)
-        self.redo_stack.clear()
+        self.history_manager.push_state(self.grid_data)
         
     def perform_undo(self):
-        if self.history:
-            potential_state = self.history[-1]
-            if not potential_state or not potential_state[0]:
-                self.history.pop()
-                return
-
-            self.redo_stack.append([row[:] for row in self.grid_data])
-            self.grid_data = self.history.pop()
-            
+        new_state = self.history_manager.undo(self.grid_data)
+        if new_state:
+            self.grid_data = new_state
             self.rows = len(self.grid_data)
             self.cols = len(self.grid_data[0]) if self.rows > 0 else 0
-            
             self.sel_start = None
             self.sel_end = None
             self.floating_pixels = None
@@ -228,9 +218,9 @@ class EditorTab:
             self.app.notify_preview()
 
     def perform_redo(self):
-        if self.redo_stack:
-            self.history.append([row[:] for row in self.grid_data])
-            self.grid_data = self.redo_stack.pop()
+        new_state = self.history_manager.redo(self.grid_data)
+        if new_state:
+            self.grid_data = new_state
             self.rows = len(self.grid_data)
             self.cols = len(self.grid_data[0]) if self.rows > 0 else 0
             self.draw_grid_lines()
@@ -252,166 +242,54 @@ class EditorTab:
                         temp[r][c] = color
         return temp
 
+    # --- DELEGATED EVENTS ---
     def on_click(self, event):
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         c = int(canvas_x // self.pixel_size)
         r = int(canvas_y // self.pixel_size)
         
-        if self.app.active_tool == "select":
-            if self.point_in_selection(r, c):
-                if not self.floating_pixels:
-                    self.lift_selection_to_float()
-                self.drag_start_ref = (r, c)
-                self.drag_orig_offset = self.floating_offset
-            else:
-                self.commit_selection() 
-                if 0 <= r < self.rows and 0 <= c < self.cols:
-                    self.sel_start = (r, c)
-                    self.sel_end = (r, c)
-                    self.draw_grid_lines()
-        
-        elif self.app.active_tool == "magic_wand":
-            self.commit_selection() # Commit previous before starting new
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                self.save_state()
-                self.magic_wand_select(r, c)
-                # We don't notify preview here because selection isn't pixels yet
-                # But visual box needs to update
-                self.draw_grid_lines()
-
-        elif self.app.active_tool == "grab": 
-            self.canvas.scan_mark(event.x, event.y)
-        
-        elif self.app.active_tool == "bucket":
-            self.commit_selection()
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                self.save_state()
-                self.flood_fill(r, c, self.app.active_color)
-                self.app.notify_preview()
-        else:
-            self.commit_selection()
-            self.save_state()
-            self.paint(event)
-            self.app.notify_preview()
-
-    def magic_wand_select(self, start_r, start_c):
-        """BFS to find connected pixels and lift them to floating layer."""
-        target_color = self.grid_data[start_r][start_c]
-        
-        # Standard BFS
-        queue = [(start_r, start_c)]
-        visited = set()
-        selected_pixels = [] 
-        
-        while queue:
-            r, c = queue.pop(0)
-            if (r, c) in visited: continue
-            visited.add((r, c))
-            
-            if self.grid_data[r][c] == target_color:
-                selected_pixels.append((r, c))
-                # Add neighbors
-                if r > 0: queue.append((r-1, c))
-                if r < self.rows - 1: queue.append((r+1, c))
-                if c > 0: queue.append((r, c-1))
-                if c < self.cols - 1: queue.append((r, c+1))
-                
-        if not selected_pixels: return
-
-        # 1. Calculate Bounds
-        min_r = min(p[0] for p in selected_pixels)
-        max_r = max(p[0] for p in selected_pixels)
-        min_c = min(p[1] for p in selected_pixels)
-        max_c = max(p[1] for p in selected_pixels)
-        
-        # 2. Lift to Floating
-        self.floating_pixels = {}
-        self.floating_offset = (min_r, min_c)
-        
-        for r, c in selected_pixels:
-            rel_r = r - min_r
-            rel_c = c - min_c
-            self.floating_pixels[(rel_r, rel_c)] = self.grid_data[r][c]
-            self.grid_data[r][c] = EMPTY_COLOR 
-            
-        # 3. Set Visual Selection Box
-        self.sel_start = (min_r, min_c)
-        self.sel_end = (max_r, max_c)
+        # DELEGATE TO ACTIVE TOOL
+        if self.app.active_tool:
+            self.app.active_tool.on_click(self, r, c, event)
 
     def on_drag(self, event):
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         c = int(canvas_x // self.pixel_size)
         r = int(canvas_y // self.pixel_size)
-
-        if self.app.active_tool == "select":
-            if self.floating_pixels and hasattr(self, 'drag_start_ref'):
-                dr = r - self.drag_start_ref[0]
-                dc = c - self.drag_start_ref[1]
-                orig_fr, orig_fc = self.drag_orig_offset
-                self.floating_offset = (orig_fr + dr, orig_fc + dc)
-                self.draw_grid_lines()
-                self.app.notify_preview()
-            elif self.sel_start:
-                r = max(0, min(self.rows-1, r))
-                c = max(0, min(self.cols-1, c))
-                self.sel_end = (r, c)
-                self.draw_grid_lines()
-        elif self.app.active_tool == "grab": 
-            self.canvas.scan_dragto(event.x, event.y, gain=1)
         
-        # Magic wand has no drag action
-        elif self.app.active_tool == "magic_wand":
-            pass
-            
-        else: 
-            self.paint(event)
-            self.app.notify_preview()
+        # DELEGATE TO ACTIVE TOOL
+        if self.app.active_tool:
+            self.app.active_tool.on_drag(self, r, c, event)
 
     def on_release(self, event):
-        if hasattr(self, 'drag_start_ref'):
-            del self.drag_start_ref
+        # DELEGATE TO ACTIVE TOOL
+        if self.app.active_tool:
+            self.app.active_tool.on_release(self, event)
 
-    def paint(self, event, specific_color=None):
+    # --- RIGHT CLICK OVERRIDES (Manual Eraser) ---
+    def start_eraser_override(self, event):
+        self.commit_selection()
+        self.save_state()
+        self._manual_erase(event)
+    
+    def drag_eraser_override(self, event):
+        self._manual_erase(event)
+
+    def _manual_erase(self, event):
+        # Simple local helper to keep right-click eraser working 
+        # without needing to switch the active tool
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         col = int(canvas_x // self.pixel_size)
         row = int(canvas_y // self.pixel_size)
-
         if 0 <= row < self.rows and 0 <= col < self.cols:
-            target = specific_color if specific_color else self.app.active_color
-            if self.grid_data[row][col] != target:
-                self.grid_data[row][col] = target
+            if self.grid_data[row][col] != EMPTY_COLOR:
+                self.grid_data[row][col] = EMPTY_COLOR
                 if (row, col) in self.rects:
-                    self.canvas.itemconfig(self.rects[(row, col)], fill=target)
-
-    def flood_fill(self, start_r, start_c, target_color):
-        original_color = self.grid_data[start_r][start_c]
-        if original_color == target_color: return
-        queue = [(start_r, start_c)]
-        visited = set()
-        while queue:
-            r, c = queue.pop(0)
-            if (r, c) in visited: continue
-            visited.add((r, c))
-            if self.grid_data[r][c] == original_color:
-                self.grid_data[r][c] = target_color
-                if r > 0: queue.append((r-1, c))
-                if r < self.rows - 1: queue.append((r+1, c))
-                if c > 0: queue.append((r, c-1))
-                if c < self.cols - 1: queue.append((r, c+1))
-        self.draw_grid_lines()
-
-    def start_eraser(self, event):
-        self.commit_selection()
-        self.save_state()
-        self.paint(event, EMPTY_COLOR)
-        self.app.notify_preview()
-    
-    def drag_eraser(self, event):
-        self.paint(event, EMPTY_COLOR)
-        self.app.notify_preview()
+                    self.canvas.itemconfig(self.rects[(row, col)], fill=EMPTY_COLOR)
+                self.app.notify_preview()
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")

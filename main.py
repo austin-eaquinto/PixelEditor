@@ -12,13 +12,21 @@ from project_manager import ProjectManager
 from animation_preview import AnimationPreview
 import icons 
 
+# --- NEW TOOL IMPORTS ---
+from tools.brush import BrushTool
+from tools.eraser import EraserTool
+from tools.bucket import BucketTool
+from tools.wand import MagicWandTool
+from tools.select import SelectTool
+from tools.grab import GrabTool
+
 print("--- SYSTEM STARTING ---")
 
 class PixelEditor:
     def __init__(self, root):
         print("Initializing Interface...")
         self.root = root
-        self.root.title("Gemini Pixel Editor v37 - Magic Wand")
+        self.root.title("Gemini Pixel Editor v38 - Modular Tools")
         
         # --- DYNAMIC WINDOW SIZING ---
         screen_width = self.root.winfo_screenwidth()
@@ -38,13 +46,23 @@ class PixelEditor:
         # STATE
         self.brush_color = "#000000" 
         self.active_color = "#000000"
-        self.active_tool = "brush" 
         self.show_grid = True
         self.settings_win = None
         self.current_project_path = None 
         self.clipboard = None 
-        
         self.preview_window = None 
+
+        # --- INITIALIZE TOOLS ---
+        self.tool_instances = {
+            "brush": BrushTool(self),
+            "eraser": EraserTool(self),
+            "bucket": BucketTool(self),
+            "wand": MagicWandTool(self),
+            "select": SelectTool(self),
+            "grab": GrabTool(self)
+        }
+        # Set default tool
+        self.active_tool = self.tool_instances["brush"]
 
         # --- LOAD ICONS ---
         try:
@@ -52,13 +70,12 @@ class PixelEditor:
             self.img_eraser = icons.create_icon("eraser")
             self.img_bucket = icons.create_icon("bucket")
             self.img_select = icons.create_icon("select")
-            self.img_wand   = icons.create_icon("magic_wand") # NEW
+            self.img_wand   = icons.create_icon("magic_wand")
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
         except Exception as e:
             print(f"Icon Warning: {e}")
             self.img_brush = None
-            self.img_select = None
 
         # MANAGERS
         self.palette_manager = PaletteManager(self)
@@ -113,7 +130,7 @@ class PixelEditor:
         self.btn_bucket = tk.Button(top_frame, image=self.img_bucket, command=self.select_bucket)
         self.btn_bucket.pack(side=tk.LEFT, padx=1)
         
-        self.btn_wand = tk.Button(top_frame, image=self.img_wand, command=self.select_magic_wand) # NEW
+        self.btn_wand = tk.Button(top_frame, image=self.img_wand, command=self.select_magic_wand)
         self.btn_wand.pack(side=tk.LEFT, padx=1)
 
         self.btn_select = tk.Button(top_frame, image=self.img_select, command=self.select_selection_tool)
@@ -250,22 +267,20 @@ class PixelEditor:
     def paste_selection(self, event=None):
         tab = self.active_tab()
         if tab and self.clipboard:
-            # Auto-switch to select tool on paste
             self.select_selection_tool()
             tab.paste_from_clipboard(self.clipboard)
             self.show_toast("Pasted!")
 
     def nudge_selection(self, dr, dc):
-        if self.active_tool == "select":
+        # We now check against the tool INSTANCE, or use isinstance
+        if self.active_tool == self.tool_instances["select"]:
             tab = self.active_tab()
             if tab:
                 tab.move_selection_by_offset(dr, dc)
             return "break"
-        # Implicitly returns None
 
     # --- LIVE SYNC HELPER ---
     def notify_preview(self):
-        """Called by EditorTab whenever pixels change."""
         if self.preview_window:
             self.preview_window.update_from_editor()
 
@@ -287,47 +302,45 @@ class PixelEditor:
         self.btn_bucket.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_grab.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
-        self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0") # Reset Wand
+        self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0")
         
-        # Only commit selection if we are leaving a selection tool
-        # BUT: If we are switching from Wand -> Select, we might want to keep the selection?
-        # For now, simplest is: changing tools always commits.
-        if (self.active_tool == "select" or self.active_tool == "magic_wand") and self.active_tab():
-            # NOTE: If you switch from Wand -> Select, this commits the wand selection
-            # down to the canvas. To move a wand selection, the user should probably
-            # stick to the Wand tool or we need more complex logic.
-            # actually, let's allow "Select" to NOT commit if coming from Wand?
-            # No, standard behavior: switching tools commits.
+        # We need to tell the OLD tool "we are leaving". 
+        # But for now, just auto-commit selection if we are leaving a selection tool.
+        # Simple check: If the active tab has a selection, commit it.
+        if self.active_tab():
             self.active_tab().commit_selection()
 
     def select_brush(self):
         self._reset_tools()
-        self.active_tool = "brush"; self.active_color = self.brush_color
+        self.active_tool = self.tool_instances["brush"]
+        self.active_color = self.brush_color
         self.btn_brush.config(relief=tk.SUNKEN, bg="#ddd")
         
     def select_eraser(self):
         self._reset_tools()
-        self.active_tool = "eraser"; self.active_color = EMPTY_COLOR
+        self.active_tool = self.tool_instances["eraser"]
+        self.active_color = EMPTY_COLOR
         self.btn_eraser.config(relief=tk.SUNKEN, bg="#ddd")
 
     def select_grab(self):
         self._reset_tools()
-        self.active_tool = "grab"
+        self.active_tool = self.tool_instances["grab"]
         self.btn_grab.config(relief=tk.SUNKEN, bg="#ddd")
         
     def select_bucket(self):
         self._reset_tools()
-        self.active_tool = "bucket"; self.active_color = self.brush_color
+        self.active_tool = self.tool_instances["bucket"]
+        self.active_color = self.brush_color
         self.btn_bucket.config(relief=tk.SUNKEN, bg="#ddd")
         
     def select_magic_wand(self):
         self._reset_tools()
-        self.active_tool = "magic_wand"
+        self.active_tool = self.tool_instances["wand"]
         self.btn_wand.config(relief=tk.SUNKEN, bg="#ddd")
         
     def select_selection_tool(self):
         self._reset_tools()
-        self.active_tool = "select"
+        self.active_tool = self.tool_instances["select"]
         self.btn_select.config(relief=tk.SUNKEN, bg="#ddd")
         if self.active_tab(): self.active_tab().draw_grid_lines()
 
@@ -374,7 +387,6 @@ class PixelEditor:
         return {}
     
     def open_animation_preview(self):
-        # FIX: Check if already open
         if self.preview_window and self.preview_window.win.winfo_exists():
             self.preview_window.win.lift()
             return
