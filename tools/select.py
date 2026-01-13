@@ -10,7 +10,6 @@ class SelectTool(Tool):
         self.mode = "none" # "box" or "move"
 
     def on_click(self, tab, r, c, event=None):
-        # Check if clicking inside an existing selection
         if tab.point_in_selection(r, c):
             # MODE: MOVE EXISTING PIXELS
             self.mode = "move"
@@ -23,7 +22,7 @@ class SelectTool(Tool):
         else:
             # MODE: NEW SELECTION BOX
             self.mode = "box"
-            tab.commit_selection() # Clear old one
+            tab.commit_selection() 
             
             if 0 <= r < tab.rows and 0 <= c < tab.cols:
                 tab.sel_start = (r, c)
@@ -32,20 +31,27 @@ class SelectTool(Tool):
 
     def on_drag(self, tab, r, c, event=None):
         if self.mode == "move":
-            # Moving pixels
+            # --- LAG FIX: USE VISUAL MOVE ---
             if tab.floating_pixels and self.drag_start_ref:
                 dr = r - self.drag_start_ref[0]
                 dc = c - self.drag_start_ref[1]
                 orig_fr, orig_fc = self.drag_orig_offset
                 
-                tab.floating_offset = (orig_fr + dr, orig_fc + dc)
-                tab.draw_grid_lines()
-                tab.app.notify_preview()
+                new_fr = orig_fr + dr
+                new_fc = orig_fc + dc
+                
+                # Check if we actually moved to a new grid cell before redrawing
+                if (new_fr, new_fc) != tab.floating_offset:
+                    # Calculate delta for the visual shift
+                    delta_r = new_fr - tab.floating_offset[0]
+                    delta_c = new_fc - tab.floating_offset[1]
+                    
+                    tab.visual_move_selection(delta_r, delta_c)
+                    tab.floating_offset = (new_fr, new_fc)
+                    tab.app.notify_preview()
                 
         elif self.mode == "box":
-            # Dragging selection box
             if tab.sel_start:
-                # Constrain to grid
                 r = max(0, min(tab.rows - 1, r))
                 c = max(0, min(tab.cols - 1, c))
                 

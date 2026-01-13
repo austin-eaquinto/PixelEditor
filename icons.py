@@ -10,9 +10,19 @@ def create_icon(type_name):
         except: pass
 
     if type_name == "brush":
-        color = "#000000"
-        for i in range(3, 13):
-            p(i, i, color); p(i+1, i, color)
+        # --- ISSUE 3 FIX: REAL BRUSH ICON ---
+        handle = "#8D6E63" # Brown
+        ferrule = "#BDBDBD" # Metal
+        tip = "#000000"     # Ink
+        
+        # Handle (diagonal)
+        for i in range(8, 14): p(i, i, handle); p(i+1, i, handle)
+        
+        # Ferrule
+        p(6, 6, ferrule); p(7, 6, ferrule); p(6, 7, ferrule)
+        
+        # Tip
+        p(4, 4, tip); p(5, 4, tip); p(4, 5, tip); p(3, 3, tip)
 
     elif type_name == "eraser":
         color = "#000000"
@@ -26,13 +36,17 @@ def create_icon(type_name):
         for x in range(4, 12): p(x, 5, color)
         p(10, 4, color); p(11, 3, color)
 
-    elif type_name == "magic_wand":
-        # New Wand Icon
+    elif type_name == "line":
         color = "#000000"
-        # The Stick
+        # A simple diagonal line (Distinct from the new brush)
+        for i in range(3, 13):
+            p(i, i, color)
+            p(i+1, i, color)
+
+    elif type_name == "magic_wand":
+        color = "#000000"
         for i in range(6, 14): p(i, i, color)
-        # The Sparkle
-        star_c = "#FF5722" # Orange sparkle
+        star_c = "#FF5722" 
         p(4, 4, star_c) 
         p(4, 2, star_c); p(2, 4, star_c) 
         p(6, 4, star_c); p(4, 6, star_c)

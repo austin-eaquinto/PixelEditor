@@ -47,8 +47,6 @@ class EditorTab:
         self.canvas.bind("<Button-1>", self.on_click)      
         self.canvas.bind("<B1-Motion>", self.on_drag) 
         self.canvas.bind("<ButtonRelease-1>", self.on_release)    
-        # Note: Right-click eraser is a specific override, handled separately or we can move it too.
-        # For simplicity, we keep the right-click binding here as a special case for now.
         self.canvas.bind("<Button-3>", self.start_eraser_override)
         self.canvas.bind("<B3-Motion>", self.drag_eraser_override)
         
@@ -76,7 +74,7 @@ class EditorTab:
                                                     outline="", fill=color)
                 self.rects[(r, c)] = rect
 
-        # 2. Draw Floating Pixels
+        # 2. Draw Floating Pixels (Tag them "floating")
         if self.floating_pixels and self.floating_offset:
             fr, fc = self.floating_offset
             for (lr, lc), color in self.floating_pixels.items():
@@ -96,7 +94,7 @@ class EditorTab:
                 y = r * self.pixel_size
                 self.canvas.create_line(0, y, width, y, fill=grid_color)
 
-        # 4. Draw Selection Box
+        # 4. Draw Selection Box (Tag it "ui")
         if self.sel_start and self.sel_end:
             r1, c1, r2, c2 = self.get_selection_bounds()
             if self.floating_pixels:
@@ -115,6 +113,22 @@ class EditorTab:
 
             self.sel_rect_id = self.canvas.create_rectangle(x1, y1, x2, y2, 
                                                             outline="black", dash=(4, 4), width=2, tags="ui")
+
+    # --- ISSUE 2 FIX: OPTIMIZED MOVEMENT ---
+    def visual_move_selection(self, dr, dc):
+        """
+        Moves the floating layer and selection box instantly using canvas.move
+        instead of redrawing the entire grid.
+        """
+        if not self.floating_pixels: return
+        
+        # Convert grid delta to pixel delta
+        dx = dc * self.pixel_size
+        dy = dr * self.pixel_size
+        
+        # Move objects tagged "floating" (the pixels) and "ui" (the selection box)
+        self.canvas.move("floating", dx, dy)
+        self.canvas.move("ui", dx, dy)
 
     def get_selection_bounds(self):
         if not self.sel_start or not self.sel_end: return None
@@ -248,8 +262,6 @@ class EditorTab:
         canvas_y = self.canvas.canvasy(event.y)
         c = int(canvas_x // self.pixel_size)
         r = int(canvas_y // self.pixel_size)
-        
-        # DELEGATE TO ACTIVE TOOL
         if self.app.active_tool:
             self.app.active_tool.on_click(self, r, c, event)
 
@@ -258,17 +270,14 @@ class EditorTab:
         canvas_y = self.canvas.canvasy(event.y)
         c = int(canvas_x // self.pixel_size)
         r = int(canvas_y // self.pixel_size)
-        
-        # DELEGATE TO ACTIVE TOOL
         if self.app.active_tool:
             self.app.active_tool.on_drag(self, r, c, event)
 
     def on_release(self, event):
-        # DELEGATE TO ACTIVE TOOL
         if self.app.active_tool:
             self.app.active_tool.on_release(self, event)
 
-    # --- RIGHT CLICK OVERRIDES (Manual Eraser) ---
+    # --- RIGHT CLICK OVERRIDES ---
     def start_eraser_override(self, event):
         self.commit_selection()
         self.save_state()
@@ -278,8 +287,6 @@ class EditorTab:
         self._manual_erase(event)
 
     def _manual_erase(self, event):
-        # Simple local helper to keep right-click eraser working 
-        # without needing to switch the active tool
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         col = int(canvas_x // self.pixel_size)

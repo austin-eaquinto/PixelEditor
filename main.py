@@ -12,10 +12,11 @@ from project_manager import ProjectManager
 from animation_preview import AnimationPreview
 import icons 
 
-# --- NEW TOOL IMPORTS ---
+# Tool Imports
 from tools.brush import BrushTool
 from tools.eraser import EraserTool
 from tools.bucket import BucketTool
+from tools.line import LineTool
 from tools.wand import MagicWandTool
 from tools.select import SelectTool
 from tools.grab import GrabTool
@@ -26,22 +27,27 @@ class PixelEditor:
     def __init__(self, root):
         print("Initializing Interface...")
         self.root = root
-        self.root.title("Gemini Pixel Editor v38 - Modular Tools")
+        self.root.title("Gemini Pixel Editor v39 - Responsive")
         
-        # --- DYNAMIC WINDOW SIZING ---
+        # --- ISSUE 4 FIX: DYNAMIC SIZING ---
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
+        # 1. Calculate Window Size (85% of screen)
         win_width = int(screen_width * 0.85)
         win_height = int(screen_height * 0.85)
         x_pos = int((screen_width - win_width) / 2)
         y_pos = int((screen_height - win_height) / 2)
         self.root.geometry(f"{win_width}x{win_height}+{x_pos}+{y_pos}")
         
-        # GLOBAL SETTINGS
-        self.rows = DEFAULT_ROWS
-        self.cols = DEFAULT_COLS
+        # 2. Calculate Grid Size based on Window Size
+        # We subtract approx 150px for toolbars/padding to ensure grid fits
         self.pixel_size = DEFAULT_PIXEL_SIZE
+        available_w = win_width - 60  
+        available_h = win_height - 140 
+        
+        self.cols = available_w // self.pixel_size
+        self.rows = available_h // self.pixel_size
         
         # STATE
         self.brush_color = "#000000" 
@@ -57,11 +63,11 @@ class PixelEditor:
             "brush": BrushTool(self),
             "eraser": EraserTool(self),
             "bucket": BucketTool(self),
+            "line": LineTool(self),
             "wand": MagicWandTool(self),
             "select": SelectTool(self),
             "grab": GrabTool(self)
         }
-        # Set default tool
         self.active_tool = self.tool_instances["brush"]
 
         # --- LOAD ICONS ---
@@ -70,6 +76,7 @@ class PixelEditor:
             self.img_eraser = icons.create_icon("eraser")
             self.img_bucket = icons.create_icon("bucket")
             self.img_select = icons.create_icon("select")
+            self.img_line   = icons.create_icon("line")
             self.img_wand   = icons.create_icon("magic_wand")
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
@@ -81,7 +88,6 @@ class PixelEditor:
         self.palette_manager = PaletteManager(self)
         self.project_manager = ProjectManager(self)
 
-        # Load Palette Config
         self.saved_palettes = self.project_manager.app.load_palettes_from_disk() if hasattr(self, 'load_palettes_from_disk') else self.load_palettes_from_disk_internal()
         self.current_palette = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", 
                                 "#FFFF00", "#00FFFF", "#FF00FF", "#808080", "#C0C0C0"]
@@ -96,7 +102,6 @@ class PixelEditor:
         self.root.bind("<Control-z>", lambda e: self.trigger_undo())
         self.root.bind("<Control-y>", lambda e: self.trigger_redo())
         self.root.bind("<Control-s>", lambda e: self.project_manager.save_project())
-        
         self.root.bind("<Control-c>", self.copy_selection)
         self.root.bind("<Control-v>", self.paste_selection)
         
@@ -129,7 +134,8 @@ class PixelEditor:
         self.btn_eraser.pack(side=tk.LEFT, padx=1)
         self.btn_bucket = tk.Button(top_frame, image=self.img_bucket, command=self.select_bucket)
         self.btn_bucket.pack(side=tk.LEFT, padx=1)
-        
+        self.btn_line = tk.Button(top_frame, image=self.img_line, command=self.select_line)
+        self.btn_line.pack(side=tk.LEFT, padx=1)
         self.btn_wand = tk.Button(top_frame, image=self.img_wand, command=self.select_magic_wand)
         self.btn_wand.pack(side=tk.LEFT, padx=1)
 
@@ -272,7 +278,6 @@ class PixelEditor:
             self.show_toast("Pasted!")
 
     def nudge_selection(self, dr, dc):
-        # We now check against the tool INSTANCE, or use isinstance
         if self.active_tool == self.tool_instances["select"]:
             tab = self.active_tab()
             if tab:
@@ -303,10 +308,8 @@ class PixelEditor:
         self.btn_grab.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_line.config(relief=tk.RAISED, bg="#f0f0f0")
         
-        # We need to tell the OLD tool "we are leaving". 
-        # But for now, just auto-commit selection if we are leaving a selection tool.
-        # Simple check: If the active tab has a selection, commit it.
         if self.active_tab():
             self.active_tab().commit_selection()
 
@@ -377,8 +380,12 @@ class PixelEditor:
             b.grid(row=idx//20, column=idx%20, padx=1); self.palette_buttons.append(b)
 
     def set_brush_from_palette(self, c, i):
-        self.brush_color = c; self.select_brush()
-        for idx, b in enumerate(self.palette_buttons): b.config(relief=tk.SUNKEN if idx==i else tk.RAISED)
+        # --- ISSUE 1 FIX: DO NOT RESET TOOL ---
+        self.brush_color = c
+        self.active_color = c
+        # Update the button visual state only
+        for idx, b in enumerate(self.palette_buttons): 
+            b.config(relief=tk.SUNKEN if idx==i else tk.RAISED)
 
     def load_palettes_from_disk_internal(self):
         if os.path.exists(PALETTE_FILE):
@@ -391,6 +398,12 @@ class PixelEditor:
             self.preview_window.win.lift()
             return
         self.preview_window = AnimationPreview(self)
+
+    def select_line(self):
+        self._reset_tools()
+        self.active_tool = self.tool_instances["line"]
+        self.active_color = self.brush_color
+        self.btn_line.config(relief=tk.SUNKEN, bg="#ddd")
 
 if __name__ == "__main__":
     print("Launching Window...")

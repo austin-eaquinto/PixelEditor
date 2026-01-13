@@ -16,5 +16,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# ZIP files are used for a different purpose at the moment
+# Files that are being used for a different purpose at the moment
 *.zip
+*.txt
+tmp/
