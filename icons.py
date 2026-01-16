@@ -50,6 +50,20 @@ def create_icon(type_name):
         p(4, 4, star_c) 
         p(4, 2, star_c); p(2, 4, star_c) 
         p(6, 4, star_c); p(4, 6, star_c)
+    
+    elif type_name == "picker":
+        # A simple pipette/dropper
+        color = "#000000"
+        liquid = "#2196F3"
+        # Tube body
+        for i in range(4, 9): p(i, i, color); p(i+1, i, color); p(i, i+1, color)
+        # Tip
+        p(3, 3, color)
+        # Bulb (Handle)
+        for i in range(9, 13): 
+            p(i, i, liquid)
+            p(i+1, i, liquid)
+            p(i, i+1, liquid)
 
     elif type_name == "select":
         color = "#000000"
@@ -57,6 +71,25 @@ def create_icon(type_name):
             p(x, 2, color); p(x, 13, color)
         for y in range(2, 14, 2): 
             p(2, y, color); p(13, y, color)
+    
+    elif type_name == "rect":
+        color = "#000000"
+        # Simple box
+        for x in range(3, 13):
+            p(x, 4, color); p(x, 11, color)
+        for y in range(4, 12):
+            p(3, y, color); p(12, y, color)
+            
+    elif type_name == "ellipse":
+        color = "#000000"
+        # Simple approximated circle
+        p(7, 3, color); p(8, 3, color)  # Top
+        p(7, 12, color); p(8, 12, color) # Bottom
+        p(3, 7, color); p(3, 8, color)   # Left
+        p(12, 7, color); p(12, 8, color) # Right
+        # Corners
+        p(4, 5, color); p(5, 4, color); p(10, 4, color); p(11, 5, color)
+        p(4, 10, color); p(5, 11, color); p(10, 11, color); p(11, 10, color)
 
     elif type_name == "gemini":
         color = "#FFFFFF"

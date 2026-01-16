@@ -2,6 +2,7 @@
 import tkinter as tk
 from settings import *
 from history import HistoryManager
+from algorithms import get_line_pixels
 
 class EditorTab:
     """Represents a single Tab/Frame in the animation."""
@@ -10,6 +11,11 @@ class EditorTab:
         self.rows = rows
         self.cols = cols
         self.pixel_size = pixel_size
+        self.prev_right_click_pos = None
+
+        # --- SYMMETRY STATE ---
+        self.mirror_x = False
+        self.mirror_y = False
         
         # Data Structures
         self.grid_data = [[EMPTY_COLOR for _ in range(self.cols)] for _ in range(self.rows)]
@@ -49,6 +55,7 @@ class EditorTab:
         self.canvas.bind("<ButtonRelease-1>", self.on_release)    
         self.canvas.bind("<Button-3>", self.start_eraser_override)
         self.canvas.bind("<B3-Motion>", self.drag_eraser_override)
+        self.canvas.bind("<ButtonRelease-3>", self.stop_eraser_override)
         
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
@@ -114,7 +121,6 @@ class EditorTab:
             self.sel_rect_id = self.canvas.create_rectangle(x1, y1, x2, y2, 
                                                             outline="black", dash=(4, 4), width=2, tags="ui")
 
-    # --- ISSUE 2 FIX: OPTIMIZED MOVEMENT ---
     def visual_move_selection(self, dr, dc):
         """
         Moves the floating layer and selection box instantly using canvas.move
@@ -281,25 +287,77 @@ class EditorTab:
     def start_eraser_override(self, event):
         self.commit_selection()
         self.save_state()
-        self._manual_erase(event)
-    
-    def drag_eraser_override(self, event):
-        self._manual_erase(event)
-
-    def _manual_erase(self, event):
+        
+        # Calculate grid position
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
-        col = int(canvas_x // self.pixel_size)
-        row = int(canvas_y // self.pixel_size)
-        if 0 <= row < self.rows and 0 <= col < self.cols:
-            if self.grid_data[row][col] != EMPTY_COLOR:
-                self.grid_data[row][col] = EMPTY_COLOR
-                if (row, col) in self.rects:
-                    self.canvas.itemconfig(self.rects[(row, col)], fill=EMPTY_COLOR)
-                self.app.notify_preview()
+        c = int(canvas_x // self.pixel_size)
+        r = int(canvas_y // self.pixel_size)
+        
+        # Erase and initialize previous position
+        self._manual_erase(r, c)
+        self.prev_right_click_pos = (r, c)
+    
+    def drag_eraser_override(self, event):
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        c = int(canvas_x // self.pixel_size)
+        r = int(canvas_y // self.pixel_size)
+
+        # Interpolate line if we have a previous position
+        if self.prev_right_click_pos:
+            pr, pc = self.prev_right_click_pos
+            if (pr, pc) != (r, c):
+                pixels = get_line_pixels(pr, pc, r, c)
+                for lr, lc in pixels:
+                    self._manual_erase(lr, lc)
+        else:
+            self._manual_erase(r, c)
+            
+        self.prev_right_click_pos = (r, c)
+
+    def stop_eraser_override(self, event):
+        self.prev_right_click_pos = None
+
+    def _manual_erase(self, r, c):
+        # Forward to the new central method
+        self.paint_pixel(r, c, EMPTY_COLOR)
+        self.app.notify_preview()
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def _on_shift_mousewheel(self, event):
         self.canvas.xview_scroll(int(-1*(event.delta/120)), "units")
+    
+    def paint_pixel(self, r, c, color):
+        """
+        Central method to paint a pixel. 
+        Handles Bounds Checking, Visual Updates, and Symmetry.
+        """
+        # 1. Paint the primary pixel
+        self._set_single_pixel(r, c, color)
+
+        # 2. Handle Mirror X
+        if self.mirror_x:
+            mirror_c = (self.cols - 1) - c
+            self._set_single_pixel(r, mirror_c, color)
+            
+        # 3. Handle Mirror Y
+        if self.mirror_y:
+            mirror_r = (self.rows - 1) - r
+            self._set_single_pixel(mirror_r, c, color)
+            
+        # 4. Handle Mirror X + Y (The diagonal corner)
+        if self.mirror_x and self.mirror_y:
+            mirror_c = (self.cols - 1) - c
+            mirror_r = (self.rows - 1) - r
+            self._set_single_pixel(mirror_r, mirror_c, color)
+
+    def _set_single_pixel(self, r, c, color):
+        """Internal helper to actually set data and canvas."""
+        if 0 <= r < self.rows and 0 <= c < self.cols:
+            if self.grid_data[r][c] != color:
+                self.grid_data[r][c] = color
+                if (r, c) in self.rects:
+                    self.canvas.itemconfig(self.rects[(r, c)], fill=color)

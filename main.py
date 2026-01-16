@@ -20,6 +20,9 @@ from tools.line import LineTool
 from tools.wand import MagicWandTool
 from tools.select import SelectTool
 from tools.grab import GrabTool
+from tools.grab import GrabTool
+from tools.picker import EyedropperTool
+from tools.shape import RectangleTool, EllipseTool
 
 print("--- SYSTEM STARTING ---")
 
@@ -29,19 +32,18 @@ class PixelEditor:
         self.root = root
         self.root.title("Gemini Pixel Editor v39 - Responsive")
         
-        # --- ISSUE 4 FIX: DYNAMIC SIZING ---
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
-        # 1. Calculate Window Size (85% of screen)
+        # Calculate Window Size (85% of screen)
         win_width = int(screen_width * 0.85)
         win_height = int(screen_height * 0.85)
         x_pos = int((screen_width - win_width) / 2)
         y_pos = int((screen_height - win_height) / 2)
         self.root.geometry(f"{win_width}x{win_height}+{x_pos}+{y_pos}")
         
-        # 2. Calculate Grid Size based on Window Size
-        # We subtract approx 150px for toolbars/padding to ensure grid fits
+        # Calculate Grid Size based on Window Size
+        # Subtract approx 150px for toolbars/padding to ensure grid fits
         self.pixel_size = DEFAULT_PIXEL_SIZE
         available_w = win_width - 60  
         available_h = win_height - 140 
@@ -66,7 +68,10 @@ class PixelEditor:
             "line": LineTool(self),
             "wand": MagicWandTool(self),
             "select": SelectTool(self),
-            "grab": GrabTool(self)
+            "grab": GrabTool(self),
+            "picker": EyedropperTool(self),
+            "rect": RectangleTool(self),
+            "ellipse": EllipseTool(self)
         }
         self.active_tool = self.tool_instances["brush"]
 
@@ -76,8 +81,11 @@ class PixelEditor:
             self.img_eraser = icons.create_icon("eraser")
             self.img_bucket = icons.create_icon("bucket")
             self.img_select = icons.create_icon("select")
+            self.img_rect = icons.create_icon("rect")
+            self.img_ellipse = icons.create_icon("ellipse")
             self.img_line   = icons.create_icon("line")
             self.img_wand   = icons.create_icon("magic_wand")
+            self.img_picker = icons.create_icon("picker")
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
         except Exception as e:
@@ -94,6 +102,7 @@ class PixelEditor:
         self.palette_buttons = [] 
 
         self.setup_ui()
+        self.setup_shortcuts()
         
         self.add_new_tab("Frame 1")
         self.setup_plus_tab()
@@ -120,6 +129,18 @@ class PixelEditor:
         tk.Button(top_frame, text="⚙️ Grid", command=self.open_grid_settings).pack(side=tk.LEFT, padx=2)
         self.btn_grid = tk.Button(top_frame, text="Grid: ON", width=8, relief=tk.RAISED, command=self.toggle_grid)
         self.btn_grid.pack(side=tk.LEFT, padx=2)
+
+        # --- SYMMETRY CONTROLS ---
+        tk.Frame(top_frame, width=10).pack(side=tk.LEFT)
+        
+        self.var_mirror_x = tk.BooleanVar(value=False)
+        self.chk_mirror_x = tk.Checkbutton(top_frame, text="X-Mir", variable=self.var_mirror_x, command=self.toggle_mirror)
+        self.chk_mirror_x.pack(side=tk.LEFT)
+
+        self.var_mirror_y = tk.BooleanVar(value=False)
+        self.chk_mirror_y = tk.Checkbutton(top_frame, text="Y-Mir", variable=self.var_mirror_y, command=self.toggle_mirror)
+        self.chk_mirror_y.pack(side=tk.LEFT)
+        # ----------------------------------
         
         tk.Frame(top_frame, width=10).pack(side=tk.LEFT)
         tk.Button(top_frame, text="↩", width=3, command=self.trigger_undo).pack(side=tk.LEFT, padx=1)
@@ -136,9 +157,14 @@ class PixelEditor:
         self.btn_bucket.pack(side=tk.LEFT, padx=1)
         self.btn_line = tk.Button(top_frame, image=self.img_line, command=self.select_line)
         self.btn_line.pack(side=tk.LEFT, padx=1)
+        self.btn_rect = tk.Button(top_frame, image=self.img_rect, command=self.select_rect)
+        self.btn_rect.pack(side=tk.LEFT, padx=1)
+        self.btn_ellipse = tk.Button(top_frame, image=self.img_ellipse, command=self.select_ellipse)
+        self.btn_ellipse.pack(side=tk.LEFT, padx=1)
         self.btn_wand = tk.Button(top_frame, image=self.img_wand, command=self.select_magic_wand)
         self.btn_wand.pack(side=tk.LEFT, padx=1)
-
+        self.btn_picker = tk.Button(top_frame, image=self.img_picker, command=self.select_picker)
+        self.btn_picker.pack(side=tk.LEFT, padx=1)
         self.btn_select = tk.Button(top_frame, image=self.img_select, command=self.select_selection_tool)
         self.btn_select.pack(side=tk.LEFT, padx=1)
         
@@ -224,6 +250,9 @@ class PixelEditor:
             name = f"Frame {count}"
         new_tab = EditorTab(self.notebook, self, self.rows, self.cols, self.pixel_size, name)
         new_tab.frame.tab_obj = new_tab 
+        # Sync new tab with UI checkboxes
+        new_tab.mirror_x = getattr(self, 'var_mirror_x', tk.BooleanVar()).get()
+        new_tab.mirror_y = getattr(self, 'var_mirror_y', tk.BooleanVar()).get()
         total = len(self.notebook.tabs())
         if total > 0 and self.notebook.tab(total-1, "text") == " + ":
             self.notebook.insert(total-1, new_tab.frame, text=name)
@@ -309,6 +338,10 @@ class PixelEditor:
         self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_line.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_line.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_picker.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_rect.config(relief=tk.RAISED, bg="#f0f0f0")
+        self.btn_ellipse.config(relief=tk.RAISED, bg="#f0f0f0")
         
         if self.active_tab():
             self.active_tab().commit_selection()
@@ -346,6 +379,69 @@ class PixelEditor:
         self.active_tool = self.tool_instances["select"]
         self.btn_select.config(relief=tk.SUNKEN, bg="#ddd")
         if self.active_tab(): self.active_tab().draw_grid_lines()
+    
+    def select_picker(self):
+        self._reset_tools()
+        self.active_tool = self.tool_instances["picker"]
+        self.btn_picker.config(relief=tk.SUNKEN, bg="#ddd")
+    
+    def toggle_mirror(self):
+        tab = self.active_tab()
+        if tab:
+            tab.mirror_x = self.var_mirror_x.get()
+            tab.mirror_y = self.var_mirror_y.get()
+
+    def set_active_color(self, color):
+        """Helper to safely set the color from external tools (like Picker)"""
+        if color == settings.EMPTY_COLOR:
+            # Option: Do we switch to eraser? For now, let's just ignore transparent picks
+            return 
+            
+        self.brush_color = color
+        self.active_color = color
+        
+        # Visual Update: Check if this color exists in the Quick Palette buttons
+        found = False
+        for idx, btn in enumerate(self.palette_buttons):
+            # We compare hex strings. 
+            # Note: Tkinter colors might normalize differently, but exact hex matches usually work.
+            if self.current_palette[idx].lower() == color.lower():
+                self.set_brush_from_palette(color, idx)
+                found = True
+                break
+        
+        # If the color isn't in the palette, we still set it as active 
+        # (The UI just won't show a highlighted palette button)
+        if not found:
+            # We manually reset buttons because set_brush_from_palette wasn't called
+            for b in self.palette_buttons: b.config(relief=tk.RAISED)
+            self.show_toast(f"Color: {color}")
+        
+    def setup_shortcuts(self):
+        """Binds keyboard keys to tools."""
+        self.root.bind("b", lambda e: self.select_brush())
+        self.root.bind("e", lambda e: self.select_eraser())
+        self.root.bind("g", lambda e: self.select_bucket()) # G for "Gradient" or standard Bucket key
+        self.root.bind("l", lambda e: self.select_line())
+        self.root.bind("w", lambda e: self.select_magic_wand()) # W for Wand
+        self.root.bind("m", lambda e: self.select_selection_tool()) # M for Marquee/Select
+        self.root.bind("h", lambda e: self.select_grab()) # H for Hand/Grab
+        self.root.bind("i", lambda e: self.select_picker()) # I for Eyedropper/Picker
+        self.root.bind("r", lambda e: self.select_rect())     # R for Rectangle
+        self.root.bind("c", lambda e: self.select_ellipse())  # C for Circle/Ellipse
+        
+        # Symmetry Toggles (Optional, but handy)
+        self.root.bind("<Shift-x>", lambda e: self.toggle_mirror_shortcut("x"))
+        self.root.bind("<Shift-y>", lambda e: self.toggle_mirror_shortcut("y"))
+    
+    def toggle_mirror_shortcut(self, axis):
+        if axis == "x":
+            new_val = not self.var_mirror_x.get()
+            self.var_mirror_x.set(new_val)
+        elif axis == "y":
+            new_val = not self.var_mirror_y.get()
+            self.var_mirror_y.set(new_val)
+        self.toggle_mirror() # Applies the change
 
     def open_grid_settings(self):
         if self.settings_win and tk.Toplevel.winfo_exists(self.settings_win): self.settings_win.lift(); return
@@ -380,7 +476,6 @@ class PixelEditor:
             b.grid(row=idx//20, column=idx%20, padx=1); self.palette_buttons.append(b)
 
     def set_brush_from_palette(self, c, i):
-        # --- ISSUE 1 FIX: DO NOT RESET TOOL ---
         self.brush_color = c
         self.active_color = c
         # Update the button visual state only
@@ -404,6 +499,18 @@ class PixelEditor:
         self.active_tool = self.tool_instances["line"]
         self.active_color = self.brush_color
         self.btn_line.config(relief=tk.SUNKEN, bg="#ddd")
+    
+    def select_rect(self):
+        self._reset_tools()
+        self.active_tool = self.tool_instances["rect"]
+        self.active_color = self.brush_color
+        self.btn_rect.config(relief=tk.SUNKEN, bg="#ddd")
+
+    def select_ellipse(self):
+        self._reset_tools()
+        self.active_tool = self.tool_instances["ellipse"]
+        self.active_color = self.brush_color
+        self.btn_ellipse.config(relief=tk.SUNKEN, bg="#ddd")
 
 if __name__ == "__main__":
     print("Launching Window...")
