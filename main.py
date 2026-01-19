@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import json
 import os
+import sys
+print("PYTHON EXECUTABLE:", sys.executable)
 
 # Import modules
 from settings import *
@@ -23,6 +25,7 @@ from tools.grab import GrabTool
 from tools.grab import GrabTool
 from tools.picker import EyedropperTool
 from tools.shape import RectangleTool, EllipseTool
+from tools.lasso import LassoTool
 
 print("--- SYSTEM STARTING ---")
 
@@ -71,7 +74,8 @@ class PixelEditor:
             "grab": GrabTool(self),
             "picker": EyedropperTool(self),
             "rect": RectangleTool(self),
-            "ellipse": EllipseTool(self)
+            "ellipse": EllipseTool(self),
+            "lasso": LassoTool(self)
         }
         self.active_tool = self.tool_instances["brush"]
 
@@ -88,6 +92,7 @@ class PixelEditor:
             self.img_picker = icons.create_icon("picker")
             self.img_gemini = icons.create_icon("gemini")
             self.img_play   = icons.create_icon("play")
+            self.img_lasso  = icons.create_icon("lasso")
         except Exception as e:
             print(f"Icon Warning: {e}")
             self.img_brush = None
@@ -165,8 +170,24 @@ class PixelEditor:
         self.btn_wand.pack(side=tk.LEFT, padx=1)
         self.btn_picker = tk.Button(top_frame, image=self.img_picker, command=self.select_picker)
         self.btn_picker.pack(side=tk.LEFT, padx=1)
+
+        self.btn_select_menu = tk.Menubutton(top_frame, text="Selection ▼", relief=tk.RAISED)
+        self.menu_select = tk.Menu(self.btn_select_menu, tearoff=0)
+        self.btn_select_menu.config(menu=self.menu_select)
+        
+        self.menu_select.add_command(label="Rotate 90°", command=lambda: self.transform_selection("rotate"))
+        self.menu_select.add_command(label="Flip Horizontal", command=lambda: self.transform_selection("flip_h"))
+        self.menu_select.add_command(label="Flip Vertical", command=lambda: self.transform_selection("flip_v"))
+        self.menu_select.add_separator()
+        self.menu_select.add_command(label="Grow (2x)", command=lambda: self.transform_selection("resize", sx=2.0, sy=2.0))
+        self.menu_select.add_command(label="Shrink (0.5x)", command=lambda: self.transform_selection("resize", sx=0.5, sy=0.5))
+        
+        self.btn_select_menu.pack(side=tk.LEFT, padx=5)
+
         self.btn_select = tk.Button(top_frame, image=self.img_select, command=self.select_selection_tool)
         self.btn_select.pack(side=tk.LEFT, padx=1)
+        self.btn_lasso = tk.Button(top_frame, image=self.img_lasso, command=self.select_lasso)
+        self.btn_lasso.pack(side=tk.LEFT, padx=1)
         
         self.btn_grab = tk.Button(top_frame, text="✋", width=3, command=self.select_grab)
         self.btn_grab.pack(side=tk.LEFT, padx=1)
@@ -179,12 +200,27 @@ class PixelEditor:
         
         # File Operations
         tk.Frame(top_frame, width=20).pack(side=tk.LEFT) 
+        # Load / Save
         tk.Button(top_frame, text="📂 Load", bg="#2196F3", fg="white", 
-                  command=self.project_manager.load_project_folder).pack(side=tk.LEFT, padx=2)
+                  command=self.project_manager.load_project_folder).pack(side=tk.LEFT, padx=1)
         tk.Button(top_frame, text="💾 Save", bg="#4CAF50", fg="white", 
-                  command=self.project_manager.save_project).pack(side=tk.LEFT, padx=2)
-        tk.Button(top_frame, text=" Export", image=self.img_gemini, compound=tk.LEFT, bg="#9C27B0", fg="white", 
+                  command=self.project_manager.save_project).pack(side=tk.LEFT, padx=1)
+        
+        # Import
+        tk.Label(top_frame, text="|").pack(side=tk.LEFT, padx=5)
+        tk.Button(top_frame, text="📥 Import", bg="#FF5722", fg="white",
+                  command=self.project_manager.import_image_to_selection).pack(side=tk.LEFT, padx=1)
+
+        # Export Group
+        tk.Label(top_frame, text="|").pack(side=tk.LEFT, padx=5)
+
+        tk.Button(top_frame, text=" Gemini", image=self.img_gemini, compound=tk.LEFT, bg="#9C27B0", fg="white", 
                   command=self.project_manager.export_for_gemini).pack(side=tk.LEFT, padx=2)
+        tk.Button(top_frame, text="Sheet", bg="#9C27B0", fg="white", 
+                  command=self.project_manager.export_sprite_sheet).pack(side=tk.LEFT, padx=1)
+        tk.Button(top_frame, text="PNG", bg="#FF9800", fg="white", 
+                  command=self.project_manager.export_as_png).pack(side=tk.LEFT, padx=1)
+        tk.Button(top_frame, text="Txt", command=self.project_manager.export_for_gemini).pack(side=tk.LEFT, padx=1)
 
         # Quick Palette
         self.quick_palette_frame = tk.Frame(self.root, bd=1, relief=tk.GROOVE, bg="#f0f0f0")
@@ -305,12 +341,17 @@ class PixelEditor:
             self.select_selection_tool()
             tab.paste_from_clipboard(self.clipboard)
             self.show_toast("Pasted!")
-
+    
     def nudge_selection(self, dr, dc):
-        if self.active_tool == self.tool_instances["select"]:
-            tab = self.active_tab()
-            if tab:
-                tab.move_selection_by_offset(dr, dc)
+        # Allow nudge if we are in Select Tool OR if we have an active floating selection
+        tab = self.active_tab()
+        if not tab: return
+
+        is_select_tool = (self.active_tool == self.tool_instances["select"])
+        has_selection = (tab.state.floating_pixels is not None)
+
+        if is_select_tool or has_selection:
+            tab.move_selection_by_offset(dr, dc)
             return "break"
 
     # --- LIVE SYNC HELPER ---
@@ -330,7 +371,13 @@ class PixelEditor:
         self.btn_grid.config(text="Grid: ON" if self.show_grid else "Grid: OFF", relief=tk.RAISED if self.show_grid else tk.SUNKEN)
         if self.active_tab(): self.active_tab().draw_grid_lines()
 
-    def _reset_tools(self):
+    def _reset_tools(self, commit=True):
+        """
+        Resets tool button visuals. 
+        commit=True (Default): Flattens current selection to grid.
+        commit=False: Keeps floating selection (used when handing off Lasso -> Select).
+        """
+        # 1. Reset Visuals (Added btn_lasso here)
         self.btn_brush.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_eraser.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_bucket.config(relief=tk.RAISED, bg="#f0f0f0")
@@ -338,13 +385,27 @@ class PixelEditor:
         self.btn_select.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_wand.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_line.config(relief=tk.RAISED, bg="#f0f0f0")
-        self.btn_line.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_picker.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_rect.config(relief=tk.RAISED, bg="#f0f0f0")
         self.btn_ellipse.config(relief=tk.RAISED, bg="#f0f0f0")
         
-        if self.active_tab():
+        # FIX: Add Lasso button reset
+        if hasattr(self, 'btn_lasso'): 
+            self.btn_lasso.config(relief=tk.RAISED, bg="#f0f0f0")
+        
+        # 2. Commit Selection (Only if requested)
+        if commit and self.active_tab():
             self.active_tab().commit_selection()
+
+    def select_selection_tool(self, commit=True):
+        """
+        Selects the marquee tool. 
+        Pass commit=False to preserve an existing selection (e.g., from Lasso).
+        """
+        self._reset_tools(commit=commit)
+        self.active_tool = self.tool_instances["select"]
+        self.btn_select.config(relief=tk.SUNKEN, bg="#ddd")
+        if self.active_tab(): self.active_tab().draw_grid_lines()
 
     def select_brush(self):
         self._reset_tools()
@@ -511,6 +572,24 @@ class PixelEditor:
         self.active_tool = self.tool_instances["ellipse"]
         self.active_color = self.brush_color
         self.btn_ellipse.config(relief=tk.SUNKEN, bg="#ddd")
+    
+    def select_lasso(self):
+        self._reset_tools()
+        self.active_tool = self.tool_instances["lasso"]
+        self.btn_lasso.config(relief=tk.SUNKEN, bg="#ddd")
+    
+    def transform_selection(self, type_name, **kwargs):
+        tab = self.active_tab()
+        if not tab: return
+        
+        # If nothing is floating yet, lift the selection first
+        if not tab.state.floating_pixels and tab.state.sel_start:
+            tab.lift_selection_to_float()
+            
+        if tab.state.floating_pixels:
+            tab.apply_transformation(type_name, **kwargs)
+        else:
+            self.show_toast("Select an area first!")
 
 if __name__ == "__main__":
     print("Launching Window...")

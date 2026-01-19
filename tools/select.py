@@ -7,7 +7,13 @@ class SelectTool(Tool):
         super().__init__(app_ref)
         self.drag_start_ref = None
         self.drag_orig_offset = None
-        self.mode = "none" # "box" or "move"
+        self.mode = "none" 
+
+    def start_move_mode(self, tab, r, c):
+        """Forced entry into move mode (used by Lasso handoff)."""
+        self.mode = "move"
+        self.drag_start_ref = (r, c)
+        self.drag_orig_offset = tab.floating_offset
 
     def on_click(self, tab, r, c, event=None):
         if tab.point_in_selection(r, c):
@@ -40,9 +46,7 @@ class SelectTool(Tool):
                 new_fr = orig_fr + dr
                 new_fc = orig_fc + dc
                 
-                # Check if we actually moved to a new grid cell before redrawing
                 if (new_fr, new_fc) != tab.floating_offset:
-                    # Calculate delta for the visual shift
                     delta_r = new_fr - tab.floating_offset[0]
                     delta_c = new_fc - tab.floating_offset[1]
                     
@@ -56,7 +60,7 @@ class SelectTool(Tool):
                 c = max(0, min(tab.cols - 1, c))
                 
                 tab.sel_end = (r, c)
-                tab.draw_grid_lines()
+                tab.fast_update_selection(r, c)
 
     def on_release(self, tab, event=None):
         self.mode = "none"
